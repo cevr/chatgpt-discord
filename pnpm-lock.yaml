@@ -5,6 +5,7 @@ specifiers:
   chatgpt: ^2.0.3
   discord.js: ^14.7.1
   dotenv: ^16.0.3
+  fp-ts: ^2.13.1
   tsx: ^3.12.1
   typescript: ^4.9.3
   zod: ^3.19.1
@@ -14,6 +15,7 @@ dependencies:
   chatgpt: 2.0.3
   discord.js: 14.7.1
   dotenv: 16.0.3
+  fp-ts: 2.13.1
   zod: 3.19.1
 
 devDependencies:
@@ -484,6 +486,10 @@ packages:
       readable-web-to-node-stream: 3.0.2
       strtok3: 7.0.0
       token-types: 5.0.1
+    dev: false
+
+  /fp-ts/2.13.1:
+    resolution: {integrity: sha512-0eu5ULPS2c/jsa1lGFneEFFEdTbembJv8e4QKXeVJ3lm/5hyve06dlKZrpxmMwJt6rYen7sxmHHK2CLaXvWuWQ==}
     dev: false
 
   /fsevents/2.3.2:

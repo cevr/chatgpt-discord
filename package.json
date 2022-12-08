@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "dev": "tsx src/index.ts --watch"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +15,7 @@
     "chatgpt": "^2.0.3",
     "discord.js": "^14.7.1",
     "dotenv": "^16.0.3",
+    "fp-ts": "^2.13.1",
     "zod": "^3.19.1"
   },
   "devDependencies": {
