@@ -3,9 +3,7 @@ dotenv.config();
 import Discord from 'discord.js';
 import { ChatGPTAPI } from 'chatgpt';
 import z from 'zod';
-import * as TE from 'fp-ts/TaskEither';
-import * as Task from 'fp-ts/Task';
-import { pipe } from 'fp-ts/function';
+import { AsyncResult, Result } from './lib';
 
 const env = z.object({
   DISCORD_BOT_TOKEN: z.string(),
@@ -35,6 +33,8 @@ const client = new Discord.Client({
   ],
 });
 
+const conversations = new Map<string, string>();
+
 client.on(Discord.Events.ClientReady, async () => {
   const bot = client.user!;
   console.log(`Logged in as ${bot.tag}!`);
@@ -51,39 +51,45 @@ client.on(Discord.Events.MessageCreate, async (message: Discord.Message) => {
     return;
   }
 
-  pipe(
-    Task.of(() => message.channel.sendTyping()),
-    TE.fromTask,
-    TE.chain(() => loadChatApi(message)),
-    TE.chain((api) =>
-      TE.tryCatch(
-        () =>
-          api.sendMessage(
-            `${message.content} \n Please ensure your response is below 2000 characters.`
-          ),
-        () => 'Could not send message'
-      )
-    ),
-    TE.map((res) => chunkString(res, 2000)),
-    //
-
-    TE.map((chunks) =>
-      chunks.map((chunk) =>
-        TE.tryCatch(
-          () => message.channel.send(chunk),
-          () => 'Could not send message'
+  await AsyncResult.of(message.channel.sendTyping(), 'Could not send typing')
+    .flatMap(() => loadChatApi(message))
+    .flatMap((api) => {
+      const conversationId =
+        conversations.get(message.author.id) ??
+        api.getConversation().conversationId;
+      console.log('conversationId', conversationId);
+      conversations.set(message.author.id, conversationId);
+      return AsyncResult.of(
+        api.sendMessage(
+          `${message.content} \n Please ensure your response is below 2000 characters.`,
+          {
+            conversationId,
+          }
+        ),
+        'Could not send ChatGPT message'
+      );
+    })
+    .tap((res) => console.log('Sent ChatGPT message'))
+    .map((res) => chunkString(res, 2000))
+    .tap((chunks) => console.log('Chunked ChatGPT message', chunks))
+    .flatMap((chunks) =>
+      AsyncResult.sequenceSeq(
+        chunks.map((chunk) =>
+          AsyncResult.of(
+            message.channel.send(chunk) as Promise<Discord.Message<boolean>>,
+            'Could not send message'
+          )
         )
       )
-    ),
-    TE.chain((chunks) => TE.sequenceSeqArray(chunks)),
-    TE.match(
+    )
+    .tap((res) => console.log('Sent message'))
+    .fold(
       (err) => {
         console.error(err);
-        message.channel.send('An error occurred');
+        message.channel.send(`Error: ${err}`);
       },
-      (res) => {}
-    )
-  )();
+      () => {}
+    );
 });
 
 client.login(DISCORD_BOT_TOKEN);
@@ -92,9 +98,7 @@ const userSessions = new Map<string, string>();
 
 type LoadChatErrors = 'NO_SESSION_TOKEN' | 'AUTH_FAILED';
 
-function loadChatApi(
-  message: Discord.Message
-): TE.TaskEither<LoadChatErrors, ChatGPTAPI> {
+function loadChatApi(message: Discord.Message) {
   // sessionToken is required; see below for details
   // let sessionToken = userSessions.get(message.author.id);
 
@@ -108,14 +112,14 @@ function loadChatApi(
   //   sessionToken = R.getExn(res);
   // }
 
+  // ensure the API is properly authenticated
   const api = new ChatGPTAPI({
     sessionToken: CHATGPT_SESSION,
   });
 
-  // ensure the API is properly authenticated
-  return TE.tryCatch(
-    () => api.ensureAuth().then(() => api),
-    () => 'AUTH_FAILED'
+  return AsyncResult.of(
+    api.ensureAuth().then(() => api),
+    () => 'AUTH_FAILED' as LoadChatErrors
   );
 }
 
@@ -125,37 +129,29 @@ type GetSessionTokenErrors =
   | 'COULD_NOT_SEND_DM'
   | 'DM_TIMED_OUT';
 
-function getSessionToken(
-  message: Discord.Message
-): TE.TaskEither<GetSessionTokenErrors, string> {
-  return pipe(
-    TE.tryCatch(
-      () => message.author.createDM(),
-      () => 'COULD_NOT_CREATE_DM' as GetSessionTokenErrors
-    ),
-    TE.chain((dm) =>
-      pipe(
-        TE.tryCatch(
-          () => dm.send('Please enter your session token'),
-          () => 'COULD_NOT_SEND_DM' as GetSessionTokenErrors
-        ),
-        TE.chain(() =>
-          TE.tryCatch(
-            () =>
-              dm.awaitMessages({
-                max: 1,
-                time: 60000,
-              }),
-            () => 'DM_TIMED_OUT' as GetSessionTokenErrors
-          )
-        ),
-        TE.chain((response) => {
-          const content = response.first()?.content;
-          return content
-            ? TE.right(content)
-            : TE.left('COULD_NOT_GET_SESSION_TOKEN' as GetSessionTokenErrors);
-        })
+function getSessionToken(message: Discord.Message) {
+  return AsyncResult.of(
+    message.author.createDM(),
+    () => 'COULD_NOT_CREATE_DM' as GetSessionTokenErrors
+  ).flatMap((dm) =>
+    AsyncResult.of(
+      dm.send('Please enter your session token'),
+      () => 'COULD_NOT_SEND_DM' as GetSessionTokenErrors
+    ).flatMap(() =>
+      AsyncResult.of(
+        dm.awaitMessages({
+          max: 1,
+          time: 60000,
+        }),
+        () => 'DM_TIMED_OUT' as GetSessionTokenErrors
       )
+        .map((response) => response.first()?.content)
+        .map((content) =>
+          Result.fromFalsy(
+            content,
+            () => 'COULD_NOT_GET_SESSION_TOKEN' as GetSessionTokenErrors
+          )
+        )
     )
   );
 }
