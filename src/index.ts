@@ -33,7 +33,13 @@ const client = new Discord.Client({
   ],
 });
 
-const conversations = new Map<string, string>();
+const conversations = new Map<
+  string,
+  {
+    conversationId: string;
+    messageId: string;
+  }
+>();
 
 client.on(Discord.Events.ClientReady, async () => {
   const bot = client.user!;
@@ -51,22 +57,35 @@ client.on(Discord.Events.MessageCreate, async (message: Discord.Message) => {
     return;
   }
 
+  if (!message.content.startsWith('!ask')) {
+    return;
+  }
+
   await AsyncResult.of(message.channel.sendTyping(), 'Could not send typing')
     .flatMap(() => loadChatApi(message))
     .flatMap((api) => {
-      const conversationId =
-        conversations.get(message.author.id) ??
-        api.getConversation().conversationId;
-      console.log('conversationId', conversationId);
-      conversations.set(message.author.id, conversationId);
+      const conversation = conversations.get(message.author.id);
       return AsyncResult.of(
         api.sendMessage(
-          `${message.content} \n Please ensure your response is below 2000 characters.`,
+          `${message.content.replace(
+            '!ask',
+            ''
+          )} \n Please ensure your response is below 2000 characters.`,
           {
-            conversationId,
+            conversationId: conversation?.conversationId,
+            parentMessageId: conversation?.messageId,
+            onConversationResponse: (res) => {
+              console.log('onConversationResponse', res);
+              if (res.conversation_id && res.message?.id) {
+                conversations.set(message.author.id, {
+                  conversationId: res.conversation_id,
+                  messageId: res.message.id,
+                });
+              }
+            },
           }
         ),
-        'Could not send ChatGPT message'
+        (e) => 'Could not send ChatGPT message ' + e
       );
     })
     .tap((res) => console.log('Sent ChatGPT message'))
@@ -86,6 +105,7 @@ client.on(Discord.Events.MessageCreate, async (message: Discord.Message) => {
     .fold(
       (err) => {
         console.error(err);
+        conversations.delete(message.author.id);
         message.channel.send(`Error: ${err}`);
       },
       () => {}
